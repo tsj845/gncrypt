@@ -1,0 +1,14 @@
+{
+  "name": "gncrypt",
+  "version": "1.0.0",
+  "description": "",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "tristan",
+  "license": "ISC",
+  "dependencies": {
+    "electron": "^21.1.0"
+  }
+}
