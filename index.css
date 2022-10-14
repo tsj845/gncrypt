@@ -1,0 +1,54 @@
+div#connect-panel {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 50vw;
+    height: 50vh;
+    /* background-color: black; */
+}
+
+#exit-chat {
+    position: absolute;
+    left: 50vw;
+    top: 50vh;
+    width: 50vw;
+    height: 50vh;
+}
+
+#ip-entry {
+    /*  */
+}
+
+#con-fail {
+    background-color: crimson;
+    padding: 2px;
+    /* border: solid crimson 1px; */
+    /* border-radius: 50%; */
+    clip-path: ellipse(50% 100% at 50% 50%);
+    position: relative;
+    top: 2px;
+    /* clip-path: url("./back.svg"); */
+}
+
+div#pending-cons {
+    position: absolute;
+    right: 0px;
+    top: 0px;
+    width: 50vw;
+    height: 50vh;
+}
+
+#con-wait {
+    vertical-align: middle;
+    height: 1em;
+    width: 1em;
+}
+
+div#convo {
+    position: absolute;
+    left: 0px;
+    top: 50vh;
+    width: 50vw;
+    height: 50vh;
+    overflow-y: scroll;
+}

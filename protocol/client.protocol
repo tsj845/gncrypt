@@ -1,0 +1,86 @@
+DEFINES:
+    the client side protocol for "gncrypt", see the server side protocol for how this data is used
+
+TERMS:
+    server - the server
+    handle - an ip address and some id, used to do communications handoffs
+    client - the client
+    host - the client that is managing the communications in a conversation
+    entity - any client or server
+    other - the other party in a request dialog
+
+CONDITIONS:
+    "single request" - when an entity will only be making one request
+    "bundled" - whether there are multiple bundled requests
+    "is_data" - whether there is data left in the recieving buffer
+
+PSUDO FUNCTIONS:
+    send(byte|byte[]) - send a byte or series of bytes to the other party
+    get_bytes(int) - signifies a number of bytes to read from the recieving buffer
+    connect(byte[], port) - connect to the given address on the given port
+    TERMINATE() - connection termination
+
+TYPES:
+    ip_address - type {1 byte} + ( type ? 4 byte : 16 byte ) + port {2 byte}
+
+SENDING PROTOCOLS:
+    these dictate how certain types will be serialized for transit through TCP sockets
+
+    STRINGS:
+        {stringlength} + {stringcontent}
+        stringlength = 4 byte length of content in bytes
+        stringcontent = {stringlength} byte utf-8 data
+    
+    ARRAYS:
+        {arraylen} + {arrayitems}
+        arraylen = 4 byte number of array items
+        arrayitems = {arraylen} items sent with normal sending protocols
+    
+    LOG ITEM:
+        {sender id} + {contents}
+
+IMPORTANT:
+    ERRORS:
+        as it is inevitable that there will be errors this is the error send protocol
+
+        the byte 0xff is a response code reserved for signifying that an error occurred, the exact nature of the error will be communicated directly after this
+
+        0x00: unrecognized opcode - the opcode sent was not recognized
+        0x01: invalid data - the data sent was outside accepted values
+        0x02: key not found - the given key was not found in a map obj
+
+GENERAL CLIENT:
+    general protocol, communications require an upgrade
+
+    P2P PROTOCOL:
+        defines the protocol for use in P2P instances
+
+        ```
+        host -> server:
+        send(0x01);
+        ips = [[byte], [byte]][];
+        cons = Connection[]
+        // recommended to bundle these requests then read afterwards
+        for client_id in targets {
+            send(0x01 + client_id);
+            ip = 0;
+            resp = get_bytes(1);
+            if (resp == 0xff) {
+                get_bytes(1);
+                continue;
+            }
+            if (resp) {
+                ip = get_bytes(4);
+            } else {
+                ip = get_bytes(16);
+            }
+            port = get_bytes(2);
+            ips.push([ip, port]);
+        }
+        for addr in ips {
+            con = connect(addr[0], addr[1]);
+            if (con) {
+                cons.push(con);
+            }
+        }
+        ```

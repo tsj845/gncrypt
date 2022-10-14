@@ -1,4 +1,4 @@
-const { generateKeyPairSync, publicEncrypt, privateDecrypt, KeyObject, createPublicKey, createPrivateKey, createHash } = require("crypto");
+const { generateKeyPairSync, publicEncrypt, privateDecrypt, KeyObject, createPublicKey, createPrivateKey, createHash, generateKeyPair } = require("crypto");
 const { readFileSync, writeFileSync, existsSync } = require("fs");
 const join_path = require("path").join;
 const { Socket } = require("net");
@@ -30,7 +30,7 @@ function decrypt (key, msg) {
  * @returns {publicKey:KeyObject,privateKey:KeyObject}
  */
 function generatePair () {
-    return generateKeyPairSync("rsa", {modulusLength:4096,publicKeyEncoding:{format:"pkcs1",type:"pem"},privateKeyEncoding:{format:"pkcs1",type:"pem"}});
+    return generateKeyPairSync("rsa", {modulusLength:4096,publicKeyEncoding:{type:"pkcs1",format:"pem"},privateKeyEncoding:{type:"pkcs1",format:"pem"}});
 }
 
 /**
@@ -281,6 +281,8 @@ class Cryptor {
         this.bundled = [];
         /**@type {number} @public */
         this.refid = 0;
+        /**@type {boolean} @private */
+        this._writing = false;
         const that = this;
         function rebind () {
             that.write = NSocket.prototype.write;
@@ -288,6 +290,14 @@ class Cryptor {
             that.end = NSocket.prototype.end;
         }
         this.once("connect", rebind);
+        function drainCheck () {
+            if (that.writableLength === 0 && that._writing) {
+                that.emit("drain");
+                that._writing = false;
+            }
+            setTimeout(()=>{drainCheck();},0);
+        }
+        drainCheck();
     }
     /**
      * converts a Socket to an NSocket
@@ -312,6 +322,15 @@ class Cryptor {
         socket.bundled = [];
         socket.bundle = NSocket.prototype.bundle;
         socket.flush = NSocket.prototype.flush;
+        const that = socket;
+        function drainCheck () {
+            if (that.writableLength === 0 && that._writing) {
+                that.emit("drain");
+                that._writing = false;
+            }
+            setTimeout(()=>{drainCheck();},0);
+        }
+        drainCheck();
         return socket;
     }
     /**
@@ -324,13 +343,19 @@ class Cryptor {
     }
     /**
      * flushes the bundled {@link NSocket.write} commands
+     * @returns {Promise<Boolean>}
      */
     flush () {
         this.do_flush = true;
-        if (this.bundled.length === 0) return true;
-        this._owrite(Buffer.concat(this.bundled));
+        const bundle = Buffer.concat(this.bundled);
         this.bundled = [];
-        return false;
+        const that = this;
+        return new Promise((r,_) => {
+            if (bundle.length === 0) return r(true);
+            that.once("drain", ()=>{r(false)});
+            that._owrite(bundle);
+            that._writing = true;
+        });
     }
     /**
      * sets the internal cryptor
@@ -351,14 +376,15 @@ class Cryptor {
      * @override
      * @param {()=>void} cb
      */
-    end (cb) {
+    async end (cb) {
         cb = cb || (() => {});
         this.ending = true;
         let x = true;
         if (!this.do_flush) {
-            x = this.flush();
+            x = await this.flush();
         }
-        if (this.writableFinished && x) {
+        console.log("flushed");
+        if ((this.writableFinished && x) || true) {
             return this._oend(cb);
         }
         this.once("drain", () => {this._oend(cb)});
@@ -387,6 +413,9 @@ class Cryptor {
             if (that.cryptor !== null && that.cryptor !== undefined && that.use_cryptor) {
                 data = that.cryptor.crypt(data, strIsUtf8);
             }
+            if (this.do_flush) {
+                that.once("drain", res);
+            }
             if (typeof data === "string") {
                 that._wwrite(data);
             } else if (typeof data === "number") {
@@ -394,10 +423,10 @@ class Cryptor {
             } else {
                 that._wwrite(Uint8Array.from(data));
             }
-            if (this.do_flush) {
-                that.once("drain", res);
-            } else {
+            if (!this.do_flush) {
                 res();
+            } else {
+                this._writing = true;
             }
         });
     }
@@ -546,12 +575,151 @@ function init (l, obj, key) {
     save(l, obj, key);
 }
 
+/**
+ * segments a number into bytes
+ * @param {number} big number to segment
+ * @param {number} byte_count number of bytes to segment big into
+ * @returns {number[]}
+ */
+ function bigToBytes (big, byte_count) {
+    /**@type {number[]} */
+    let f = [];
+    for (let i = byte_count-1; i >= 0; i --) {
+        f.push((big & (0xff << (i * 8))) >> (i * 8));
+    }
+    return f;
+}
+
+/**
+ * creates a number out of component bytes
+ * @param {number[]} bytes bytes to convert
+ * @returns {number}
+ */
+function bytesToBig (bytes) {
+    let f = 0;
+    for (let i = bytes.length - 1; i >= 0; i --) {
+        f = f | (bytes[i] << (((bytes.length - 1) - i) * 8));
+    }
+    return f;
+}
+
+/**
+ * converts a string to a buffer of the bytes that the string is made from
+ * @param {string | Buffer} str string to convert
+ * @param {boolean} [asascii] whether to return in ASCII
+ * @param {number} [padto] length to pad to, default no padding
+ * @param {number} [padwith] what to pad the buffer with
+ * @returns {Buffer}
+ */
+ function stringToBuffer (str, asascii, padto, padwith) {
+    if (Buffer.isBuffer(str)) return str;
+    let f = [];
+    for (let i = 0; i < str.length; i ++) {
+        const x = str.charCodeAt(i);
+        if (!asascii) {
+            f.push((x & 0xff00) >> 8);
+        }
+        else if (x > 127) {
+            continue;
+        }
+        f.push(x & 0xff);
+    }
+    if (padto ?? false) {while (f.length < padto) {f.push(padwith);}}
+    // console.log(f.length, "FLEN");
+    return Buffer.from(f);
+}
+
+/**
+ * converts a buffer to text
+ * @param {Buffer|number[]} buf buffer to convert
+ * @param {NBufferEncoding} [encoding] text encoding defaults to ```utf-16```
+ */
+function bufferToString (buf, encoding) {
+    encoding = encoding || "utf-16";
+    if (!(["utf16", "utf-16"].includes(encoding))) {
+        return (Array.isArray(buf) ? Buffer.from(buf) : buf).toString(encoding);
+    }
+    if (buf.length % 2) {
+        throw new Error(`utf-16 requires even number of bytes but got "${buf.length}" instead`);
+    }
+    let f = "";
+    for (let i = 0; i < buf.length; i += 2) {
+        f += String.fromCharCode((buf[i] << 8) | buf[i+1]);
+    }
+    return f;
+}
+
+/**
+ * @param {string | Buffer} str string to convert
+ * @returns {Buffer}
+ */
+function charsToBuffer (str) {
+    if (Buffer.isBuffer(str)) return str;
+    str = str.split(" ").join("").split(/0x(?=\d\d)/).join("");
+    if (str.length % 2) {
+        throw new Error(`requires an even number of hexadecimal digits but got "${str.length}" digits instead`);
+    }
+    let f = [];
+    for (let i = 0; i < str.length; i += 2) {
+        f.push(((c.indexOf(str[i]) << 4) | (c.indexOf(str[i+1]))));
+    }
+    return Buffer.from(f);
+}
+
+const c = "0123456789abcdef";
+
+/**
+ * formats a buffer as a string
+ * @param {Buffer | number[] | number} buf buffer to format
+ * @returns {string}
+ */
+ function formatBuf (buf) {
+    buf = typeof buf === "number" ? [buf] : buf;
+    if (Buffer.isBuffer(buf)) {
+        buf = Array.from(buf);
+    }
+    // console.log(buf);
+    return `<Buffer ${(Array.isArray(buf)?buf:Array.from(buf)).map(v => c[v >> 4] + c[v & 0x0f]).toString().split(",").join(" ")}>`;
+}
+
+/**
+ * converts n to hex representation
+ * @param {number|number[]|Buffer}n thing to convert
+ * @returns {string}
+ */
+ function asHex (n) {
+    n = Buffer.isBuffer(n) ? Array.from(n) : n;
+    if (!Array.isArray(n)) {
+        return c[n >> 4] + c[n & 0x0f];
+    }
+    return n.map(v => c[v >> 4]+c[v & 0x0f]).join("");
+}
+
+/**
+ * reduces buffer contents to hex representation
+ * @param {number[]|Buffer} buf buffer to reduce
+ * @returns {string}
+ */
+function reduceToHex (buf) {
+    buf = Buffer.isBuffer(buf) ? Array.from(buf) : buf;
+    return buf.map(v => c[v >> 4]+c[v & 0x0f]).join("");
+}
+
 exports.encrypt = encrypt;
 exports.decrypt = decrypt;
 exports.generatePair = generatePair;
-exports.store_crypt = store_crypt;
 exports.save = save;
 exports.load = load;
 exports.init = init;
+exports.bigToBytes = bigToBytes;
+exports.bytesToBig = bytesToBig;
+exports.stringToBuffer = stringToBuffer;
+exports.bufferToString = bufferToString;
+exports.charsToBuffer = charsToBuffer;
+exports.formatBuf = formatBuf;
+exports.asHex = asHex;
+exports.reduceToHex = reduceToHex;
 exports.Cryptor = Cryptor;
 exports.Random = Random;
+exports.NSocket = NSocket;
+exports.OSocket = Socket;

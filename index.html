@@ -2,8 +2,15 @@
 <html>
     <head>
         <title>GNCRYPT</title>
+        <link rel="stylesheet" type="text/css" href="./index.css" />
     </head>
     <body>
+        <div id="connect-panel">
+            <p>IP Address: <input type="text" id="ip-entry"> <input type="button" value="connect" id="connect-btn"> <img src="./wait.svg" id="con-wait" hidden> <span id="con-fail" hidden>FAILED</span> </p>
+        </div>
+        <div id="pending-cons"></div>
+        <div id="convo"></div>
+        <input type="button" id="exit-chat" value="exit chat">
         <script src="index.js"></script>
     </body>
 </html>
