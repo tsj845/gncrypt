@@ -7,6 +7,11 @@ const msgpath = join_path(__dirname, "stored.msgs");
 const keypath = join_path(__dirname, "stored.keys");
 
 /**
+ * @typedef IpAddr
+ * @type {{fam:boolean,addr:Buffer,port:Buffer}}
+ */
+
+/**
  * encrypts a message using a key
  * @param {KeyObject} key
  * @param {String} msg
@@ -705,6 +710,77 @@ function reduceToHex (buf) {
     return buf.map(v => c[v >> 4]+c[v & 0x0f]).join("");
 }
 
+/**
+ * converts hex to buffer
+ * @param {String} hex hex string
+ * @returns {Buffer}
+ */
+function hexToBuf (hex) {
+    if (hex.length % 2 !== 0) {
+        throw "HEX LEN MUST BE MULTIPLE OF TWO";
+    }
+    let b = [];
+    for (let i = 0; i < hex.length; i += 2) {
+        b.push(c.indexOf(hex[i]) * 16 + c.indexOf(hex[i+1]));
+    }
+    return Buffer.from(b);
+}
+
+class AddrBook {
+    /**
+     * unpacks an address book
+     * @param {String} path file path
+     * @returns {{}}
+     */
+    static unpack (path) {
+        path = join_path(__dirname, path);
+        if (!existsSync(path)) {
+            return {};
+        }
+        let x = {};
+        const bytes = readFileSync(path);
+        let i = 0;
+        while (i < bytes.length) {
+            const name = reduceToHex(bytes.slice(i, i + 4));
+            i += 4;
+            const f = i + 1;
+            const z = Boolean(bytes[i]);
+            i += z ? 17 : 5;
+            const d = bytes.slice(f, i);
+            let addr = [];
+            for (let j = 0; j < i - f; j += (z + 1)) {
+                addr.push(z ? reduceToHex([d[j], d[j+1]]) : d[j]);
+            }
+            x[name] = [z, addr.join(z ? ":" : "."), bytesToBig(bytes.slice(i, i + 2))];
+            i += 2;
+        }
+        return x;
+    }
+    /**
+     * packs an address book
+     * @param {String} path file path
+     * @param {{}} book book to pack
+     */
+    static pack (path, book) {
+        path = join_path(__dirname, path);
+        let bytes = [];
+        for (const key in book) {
+            if (key.length !== 8) {
+                return;
+            }
+            bytes.push(...hexToBuf(key));
+            bytes.push(book[key][0] ? 1 : 0);
+            if (book[key][0]) {
+                bytes.push(...book[key][1].split(":").map(x=>Array.from(hexToBuf(x))).flat());
+            } else {
+                bytes.push(...book[key][1].split(".").map(x=>Number(x)));
+            }
+            bytes.push(...bigToBytes(book[key][2], 2));
+        }
+        writeFileSync(path, Buffer.from(bytes));
+    }
+}
+
 exports.encrypt = encrypt;
 exports.decrypt = decrypt;
 exports.generatePair = generatePair;
@@ -723,3 +799,5 @@ exports.Cryptor = Cryptor;
 exports.Random = Random;
 exports.NSocket = NSocket;
 exports.OSocket = Socket;
+exports.AddrBook = AddrBook;
+exports.IpAddr = this.IpAddr;

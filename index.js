@@ -1,5 +1,5 @@
 const { electron } = require("./common");
-const { save, load, init, generatePair, NSocket, OSocket, bytesToBig, bigToBytes, stringToBuffer, bufferToString, formatBuf } = require("./lib");
+const { save, load, init, generatePair, NSocket, OSocket, bytesToBig, bigToBytes, stringToBuffer, bufferToString, formatBuf, IpAddr, AddrBook, reduceToHex } = require("./lib");
 const net = require("net");
 
 // defs
@@ -115,19 +115,36 @@ let csock = null;
 
 let endcon = false;
 
-init(true, {"00000000":["127.0.0.1",6000]}, "pass");
+// init(true, {"00000000":["127.0.0.1",6000]}, "pass");
 
-let storages = load(true, "pass");
+// let storages = load(true, "pass");
+let storages = AddrBook.unpack("stored.svrs");
 
 console.log(storages);
 
 /**
  * gets ip addresses from storage servers
- * @param {[Buffer][]} client_ids client ids
+ * @param {Buffer[]} client_ids client ids
  * @returns {IpAddr[]}
  */
-function grap_ips (client_ids) {
+async function grap_ips (client_ids) {
     let f = [];
+    let opencons = {};
+    for (const id of client_ids) {
+        const sid = reduceToHex(id.slice(0, 4));
+        /**@type {NSocket} */
+        let con;
+        if (sid in opencons) {
+            con = opencons[sid];
+        } else {
+            con = new NSocket();
+            await new Promise((r,_)=>{con.once("connect", ()=>{r();});con.connect(storages[sid][2], storages[sid][1]);});
+            opencons[sid] = con;
+        }
+    }
+    for (const sid in opencons) {
+        opencons[sid].end();
+    }
     return f;
 }
 
